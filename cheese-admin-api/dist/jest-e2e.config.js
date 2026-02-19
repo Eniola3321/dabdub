@@ -15,12 +15,7 @@ const config = {
         '^@modules/(.*)$': '<rootDir>/src/modules/$1',
         '^@config/(.*)$': '<rootDir>/src/config/$1',
     },
-    collectCoverageFrom: [
-        'src/**/*.ts',
-        '!src/**/*.spec.ts',
-        '!src/**/*.module.ts',
-        '!src/main.ts',
-    ],
+    collectCoverageFrom: ['src/**/*.ts', '!src/**/*.spec.ts', '!src/**/*.module.ts', '!src/main.ts'],
     coverageDirectory: './coverage',
 };
 exports.default = config;

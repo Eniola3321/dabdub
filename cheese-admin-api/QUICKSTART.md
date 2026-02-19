@@ -3,6 +3,7 @@
 ## 🚀 Get Started in 5 Minutes
 
 ### Prerequisites
+
 - Node.js 18+ (verify with `node --version`)
 - npm 10+ (verify with `npm --version`)
 
@@ -86,11 +87,13 @@ describe('MyModuleService', () => {
 ### Using Path Aliases in Imports
 
 Instead of:
+
 ```typescript
 import { Logger } from '../../../common/logger';
 ```
 
 Use:
+
 ```typescript
 import { Logger } from '@common/logger';
 import { UserService } from '@modules/admin-users/user.service';
@@ -102,11 +105,13 @@ import { AppConfig } from '@config/app.config';
 ### Before Creating a Pull Request
 
 1. Create a feature branch:
+
    ```bash
    git checkout -b feature/your-feature-name
    ```
 
 2. Make your changes and ensure code quality:
+
    ```bash
    npm run build    # Check compilation
    npm run lint     # Check code quality
@@ -114,6 +119,7 @@ import { AppConfig } from '@config/app.config';
    ```
 
 3. Commit following Conventional Commits:
+
    ```bash
    git add .
    git commit -m "feat(scope): short description"
@@ -147,17 +153,17 @@ test/
 
 ## 🛠 Common Commands
 
-| Command | Description |
-|---------|-------------|
-| `npm run start:dev` | Start development server with watch mode |
+| Command               | Description                                  |
+| --------------------- | -------------------------------------------- |
+| `npm run start:dev`   | Start development server with watch mode     |
 | `npm run start:debug` | Start with Node debugger enabled (port 9229) |
-| `npm run build` | Build for production |
-| `npm run lint` | Check code quality with ESLint |
-| `npm run format` | Format code with Prettier |
-| `npm test` | Run unit tests |
-| `npm run test:watch` | Run tests in watch mode |
-| `npm run test:cov` | Generate test coverage report |
-| `npm run test:e2e` | Run e2e tests |
+| `npm run build`       | Build for production                         |
+| `npm run lint`        | Check code quality with ESLint               |
+| `npm run format`      | Format code with Prettier                    |
+| `npm test`            | Run unit tests                               |
+| `npm run test:watch`  | Run tests in watch mode                      |
+| `npm run test:cov`    | Generate test coverage report                |
+| `npm run test:e2e`    | Run e2e tests                                |
 
 ## 🔍 Debugging
 
@@ -172,6 +178,7 @@ test/
 ### Browser DevTools
 
 If using NestJS with a frontend:
+
 1. Open Chrome DevTools (F12)
 2. Go to Sources tab
 3. Server code will be available if source maps are enabled
@@ -179,6 +186,7 @@ If using NestJS with a frontend:
 ## ✅ Code Quality Standards
 
 ### No console.log
+
 Use the NestJS Logger instead:
 
 ```typescript
@@ -196,6 +204,7 @@ export class MyService {
 ```
 
 ### No any types
+
 Always use proper TypeScript types:
 
 ```typescript
@@ -215,7 +224,9 @@ function processData(data: DataObject) {
 ```
 
 ### Import Ordering
+
 Keep imports organized:
+
 1. Node.js built-ins
 2. Third-party libraries
 3. Internal modules (using @aliases)
@@ -232,11 +243,13 @@ Keep imports organized:
 ## ❓ Troubleshooting
 
 ### Port 3000 Already in Use
+
 ```bash
 PORT=3001 npm run start:dev
 ```
 
 ### Module Not Found Errors
+
 ```bash
 # Clear cache and reinstall
 rm -rf node_modules package-lock.json
@@ -244,11 +257,13 @@ npm install
 ```
 
 ### TypeScript Errors in IDE
+
 - In VS Code: Press Cmd/Ctrl + Shift + P
 - Type "TypeScript: Select TypeScript Version"
 - Choose "Use Workspace Version"
 
 ### Tests Not Running
+
 ```bash
 # Rebuild Jest cache
 npm test -- --clearCache

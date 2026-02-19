@@ -257,10 +257,10 @@ describe('UserService', () => {
   it('should create a new user with valid data', async () => {
     // Arrange
     const userData = { name: 'John', email: 'john@example.com' };
-    
+
     // Act
     const user = await userService.create(userData);
-    
+
     // Assert
     expect(user.name).toBe('John');
   });
@@ -346,10 +346,7 @@ import { HttpException, HttpStatus, NotFoundException } from '@nestjs/common';
 throw new NotFoundException('User not found');
 
 // For custom errors
-throw new HttpException(
-  { message: 'Custom error message' },
-  HttpStatus.BAD_REQUEST,
-);
+throw new HttpException({ message: 'Custom error message' }, HttpStatus.BAD_REQUEST);
 ```
 
 ## Development Workflow
