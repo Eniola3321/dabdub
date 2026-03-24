@@ -1,57 +1,39 @@
 import { Module } from '@nestjs/common';
-import { ConfigModule, ConfigService } from '@nestjs/config';
-import { TypeOrmModule } from '@nestjs/typeorm';
+import { ConfigType } from '@nestjs/config';
 import { BullModule } from '@nestjs/bull';
 import { ThrottlerModule } from '@nestjs/throttler';
-import { envValidationSchema } from './config/env.validation';
+import { AppConfigModule, appConfig, redisConfig } from './config';
+import { DatabaseModule } from './database/database.module';
 import { HealthModule } from './health/health.module';
 
 @Module({
   imports: [
-    // Config — global, validates env on startup
-    ConfigModule.forRoot({
-      isGlobal: true,
-      validationSchema: envValidationSchema,
-      validationOptions: { abortEarly: true },
-    }),
+    // 1. Config — global, validates all env vars at startup with abortEarly: false.
+    AppConfigModule,
 
-    // TypeORM — async so ConfigService is available
-    TypeOrmModule.forRootAsync({
-      inject: [ConfigService],
-      useFactory: (config: ConfigService) => ({
-        type: 'postgres',
-        host: config.get<string>('DB_HOST'),
-        port: config.get<number>('DB_PORT'),
-        username: config.get<string>('DB_USERNAME'),
-        password: config.get<string>('DB_PASSWORD'),
-        database: config.get<string>('DB_NAME'),
-        entities: [__dirname + '/**/*.entity{.ts,.js}'],
-        migrations: [__dirname + '/database/migrations/*{.ts,.js}'],
-        synchronize: config.get<string>('NODE_ENV') !== 'production',
-        logging: config.get<string>('NODE_ENV') === 'development',
-      }),
-    }),
+    // 2. Database — owns the TypeORM root connection; see database.module.ts.
+    DatabaseModule,
 
-    // Bull — async Redis connection
+    // 3. Bull — async Redis connection via typed RedisConfig.
     BullModule.forRootAsync({
-      inject: [ConfigService],
-      useFactory: (config: ConfigService) => ({
+      inject: [redisConfig.KEY],
+      useFactory: (redis: ConfigType<typeof redisConfig>) => ({
         redis: {
-          host: config.get<string>('REDIS_HOST'),
-          port: config.get<number>('REDIS_PORT'),
-          password: config.get<string>('REDIS_PASSWORD') || undefined,
+          host: redis.host,
+          port: redis.port,
+          password: redis.password,
         },
       }),
     }),
 
-    // Throttler — rate limiting
+    // 4. Throttler — rate limiting via typed AppConfig.
     ThrottlerModule.forRootAsync({
-      inject: [ConfigService],
-      useFactory: (config: ConfigService) => ({
+      inject: [appConfig.KEY],
+      useFactory: (app: ConfigType<typeof appConfig>) => ({
         throttlers: [
           {
-            ttl: config.get<number>('THROTTLE_TTL', 60) * 1000,
-            limit: config.get<number>('THROTTLE_LIMIT', 100),
+            ttl: app.throttleTtl * 1000,
+            limit: app.throttleLimit,
           },
         ],
       }),
