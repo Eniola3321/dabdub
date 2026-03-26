@@ -10,7 +10,12 @@ import {
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiBearerAuth,
+} from '@nestjs/swagger';
 import { AdminService } from './admin.service';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -79,7 +84,9 @@ export class AdminController {
   @Post('broadcast')
   @Roles(AdminRole.SUPERADMIN)
   @ApiOperation({ summary: 'Broadcast a message to users' })
-  async broadcast(@Body() dto: { title: string; body: string; segment: string }) {
+  async broadcast(
+    @Body() dto: { title: string; body: string; segment: string },
+  ) {
     return this.adminService.broadcast(dto);
   }
 }

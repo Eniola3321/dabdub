@@ -12,6 +12,17 @@ export class AuditService {
     private readonly repo: Repository<AuditLog>,
   ) {}
 
+  async log(
+    adminId: string,
+    action: string,
+    detail: string,
+    ipAddress?: string,
+  ): Promise<AuditLog> {
+    const log = this.auditLogRepo.create({
+      adminId,
+      action,
+      detail,
+      ipAddress: ipAddress ?? null,
   /** INSERT only — this is an append-only log. */
   async log(dto: CreateAuditLogDto): Promise<AuditLog> {
     const entry = this.repo.create({

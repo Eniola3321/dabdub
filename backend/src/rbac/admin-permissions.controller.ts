@@ -1,3 +1,13 @@
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Post,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 import { Body, Controller, Delete, Get, Param, Post, Req, UseGuards, UseInterceptors } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Roles } from './decorators/roles.decorator';
@@ -52,7 +62,9 @@ export class AdminPermissionsController {
 
   @Get(':adminId')
   @ApiOperation({ summary: 'List permissions for an admin' })
-  async list(@Param('adminId') adminId: string): Promise<{ permissions: Permission[] }> {
+  async list(
+    @Param('adminId') adminId: string,
+  ): Promise<{ permissions: Permission[] }> {
     const rows = await this.rbac.list(adminId);
     return { permissions: rows.map((r) => r.permission) };
   }
