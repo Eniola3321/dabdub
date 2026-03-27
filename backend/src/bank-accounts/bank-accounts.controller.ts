@@ -29,15 +29,20 @@ type AuthenticatedRequest = Request & { user: User };
 
 @ApiTags('bank-accounts')
 @ApiBearerAuth()
-@Controller('bank-accounts')
+@Controller({ path: 'bank-accounts', version: '1' })
 export class BankAccountsController {
   constructor(private readonly bankAccountsService: BankAccountsService) {}
 
   @Post()
   @UsePipes(new ValidationPipe({ transform: true }))
-  @ApiOperation({ summary: 'Link a Nigerian bank account for payouts/settlement' })
+  @ApiOperation({
+    summary: 'Link a Nigerian bank account for payouts/settlement',
+  })
   @ApiResponse({ status: 201, type: BankAccount })
-  @ApiResponse({ status: 400, description: 'Invalid account details or business rule violation' })
+  @ApiResponse({
+    status: 400,
+    description: 'Invalid account details or business rule violation',
+  })
   create(
     @Req() req: AuthenticatedRequest,
     @Body() dto: CreateBankAccountDto,
@@ -76,7 +81,9 @@ export class BankAccountsController {
   }
 
   @Get('banks')
-  @ApiOperation({ summary: 'List supported Nigerian banks (cached from Paystack)' })
+  @ApiOperation({
+    summary: 'List supported Nigerian banks (cached from Paystack)',
+  })
   @ApiResponse({ status: 200, type: BankListResponseDto })
   async getBanks(): Promise<BankListResponseDto> {
     const banks = await this.bankAccountsService.getBanks();

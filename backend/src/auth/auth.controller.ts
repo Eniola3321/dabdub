@@ -29,7 +29,7 @@ interface RequestWithUser {
 
 @ApiTags('auth')
 @ApiBearerAuth()
-@Controller('auth')
+@Controller({ path: 'auth', version: '1' })
 export class AuthController {
   constructor(
     private readonly authService: AuthService,
@@ -47,7 +47,11 @@ export class AuthController {
     @Req() req: RequestWithUser,
     @Headers('user-agent') ua?: string,
   ): Promise<TokenResponseDto> {
-    return this.authService.register(dto, req.ip, ua ? { userAgent: ua } : undefined);
+    return this.authService.register(
+      dto,
+      req.ip,
+      ua ? { userAgent: ua } : undefined,
+    );
   }
 
   @Public()
@@ -63,7 +67,11 @@ export class AuthController {
     @Req() req: RequestWithUser,
     @Headers('user-agent') ua?: string,
   ): Promise<TokenResponseDto> {
-    return this.authService.login(dto, req.ip, ua ? { userAgent: ua } : undefined);
+    return this.authService.login(
+      dto,
+      req.ip,
+      ua ? { userAgent: ua } : undefined,
+    );
   }
 
   @Public()

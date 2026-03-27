@@ -14,13 +14,20 @@ type NamespaceParam = 'waitlist' | 'users';
 
 @ApiTags('leaderboard')
 @ApiBearerAuth()
-@Controller('leaderboard')
+@Controller({ path: 'leaderboard', version: '1' })
 export class LeaderboardController {
   constructor(private readonly leaderboardService: LeaderboardService) {}
 
   @Get()
-  @ApiOperation({ summary: 'Get top-100 leaderboard with optional current-user rank' })
-  @ApiQuery({ name: 'namespace', enum: ['waitlist', 'users'], required: false, example: 'users' })
+  @ApiOperation({
+    summary: 'Get top-100 leaderboard with optional current-user rank',
+  })
+  @ApiQuery({
+    name: 'namespace',
+    enum: ['waitlist', 'users'],
+    required: false,
+    example: 'users',
+  })
   @ApiResponse({ status: 200, type: LeaderboardResponseDto })
   @ApiResponse({ status: 400, description: 'Invalid namespace' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })

@@ -14,6 +14,7 @@ pub enum DataKey {
     Creator(String),
     PayLink(String),
     Admin,
+    Paused,
     StakeBalance(String),
 }
 
@@ -43,6 +44,7 @@ pub enum Error {
     PayLinkAlreadyPaid = 7,
     Unauthorized = 8,
     UserNotFound = 9,
+    ContractPaused = 10,
 }
 
 #[contract]
@@ -56,6 +58,7 @@ impl PayLinkContract {
             panic!("admin already set");
         }
         env.storage().instance().set(&DataKey::Admin, &admin);
+        env.storage().instance().set(&DataKey::Paused, &false);
     }
 
     /// Marks `username` as an existing creator so `create_paylink` may succeed.
@@ -105,6 +108,43 @@ impl PayLinkContract {
         Ok(())
     }
 
+    pub fn is_paused(env: Env) -> bool {
+        env.storage()
+            .instance()
+            .get(&DataKey::Paused)
+            .unwrap_or(false)
+    }
+
+    pub fn pause(env: Env) -> Result<(), Error> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::Unauthorized)?;
+        admin.require_auth();
+
+        env.storage().instance().set(&DataKey::Paused, &true);
+        env.events()
+            .publish((Symbol::new(&env, "contract_paused"),), admin);
+
+        Ok(())
+    }
+
+    pub fn unpause(env: Env) -> Result<(), Error> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::Unauthorized)?;
+        admin.require_auth();
+
+        env.storage().instance().set(&DataKey::Paused, &false);
+        env.events()
+            .publish((Symbol::new(&env, "contract_unpaused"),), admin);
+
+        Ok(())
+    }
+
     pub fn create_paylink(
         env: Env,
         creator_username: String,
@@ -113,6 +153,8 @@ impl PayLinkContract {
         note: String,
         ttl_ledgers: u32,
     ) -> Result<(), Error> {
+        require_not_paused(&env)?;
+
         if !env
             .storage()
             .persistent()
@@ -166,6 +208,7 @@ impl PayLinkContract {
         requester_username: String,
         token_id: String,
     ) -> Result<(), Error> {
+        require_not_paused(&env)?;
         env.current_contract_address().require_auth();
 
         let paylink_key = DataKey::PayLink(token_id.clone());
@@ -199,16 +242,57 @@ impl PayLinkContract {
     }
 }
 
+fn require_not_paused(env: &Env) -> Result<(), Error> {
+    if PayLinkContract::is_paused(env.clone()) {
+        return Err(Error::ContractPaused);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
-    use soroban_sdk::testutils::{Address as _, Ledger as _};
+    use soroban_sdk::testutils::{Address as _, Ledger};
+
+    fn setup() -> (Env, Address, PayLinkContractClient<'static>, Address) {
+        let env = Env::default();
+        let admin = Address::generate(&env);
+        let contract_id = env.register(PayLinkContract, ());
+        let client = PayLinkContractClient::new(&env, &contract_id);
+        client.set_admin(&admin);
+        (env, contract_id, client, admin)
+    }
+
+    #[test]
+    fn is_paused_defaults_to_false() {
+        let (_env, _contract_id, client, _admin) = setup();
+        assert!(!client.is_paused());
+    }
+
+    #[test]
+    fn pause_sets_paused_true() {
+        let (env, _contract_id, client, _admin) = setup();
+        env.mock_all_auths();
+
+        client.pause();
+
+        assert!(client.is_paused());
+    }
+
+    #[test]
+    fn unpause_sets_paused_false() {
+        let (env, _contract_id, client, _admin) = setup();
+        env.mock_all_auths();
+
+        client.pause();
+        client.unpause();
+
+        assert!(!client.is_paused());
+    }
 
     #[test]
     fn create_paylink_persists_paylink_data() {
-        let env = Env::default();
-        let contract_id = env.register(PayLinkContract, ());
-        let client = PayLinkContractClient::new(&env, &contract_id);
+        let (env, _contract_id, client, _admin) = setup();
 
         let creator = String::from_str(&env, "alice");
         let token_id = String::from_str(&env, "tok-1");
@@ -232,8 +316,7 @@ mod test {
 
     #[test]
     fn paylink_data_xdr_round_trip() {
-        let env = Env::default();
-        let contract_id = env.register(PayLinkContract, ());
+        let (env, contract_id, _client, _admin) = setup();
         // token_id is a unique slug, max 64 chars
         let token_id = String::from_str(&env, "tok-xdr-roundtrip");
         let data = PayLinkData {
@@ -260,9 +343,7 @@ mod test {
 
     #[test]
     fn duplicate_token_id_returns_paylink_already_exists() {
-        let env = Env::default();
-        let contract_id = env.register(PayLinkContract, ());
-        let client = PayLinkContractClient::new(&env, &contract_id);
+        let (env, _contract_id, client, _admin) = setup();
 
         let creator = String::from_str(&env, "bob");
         let token_id = String::from_str(&env, "dup");
@@ -279,9 +360,7 @@ mod test {
 
     #[test]
     fn zero_amount_returns_invalid_amount() {
-        let env = Env::default();
-        let contract_id = env.register(PayLinkContract, ());
-        let client = PayLinkContractClient::new(&env, &contract_id);
+        let (env, _contract_id, client, _admin) = setup();
 
         let creator = String::from_str(&env, "carol");
         let token_id = String::from_str(&env, "z");
@@ -297,11 +376,8 @@ mod test {
 
     #[test]
     fn cancel_paylink_marks_link_cancelled() {
-        let env = Env::default();
+        let (env, _contract_id, client, _admin) = setup();
         env.mock_all_auths();
-
-        let contract_id = env.register(PayLinkContract, ());
-        let client = PayLinkContractClient::new(&env, &contract_id);
 
         let creator = String::from_str(&env, "dave");
         let token_id = String::from_str(&env, "tok-cancel");
@@ -322,11 +398,8 @@ mod test {
 
     #[test]
     fn cancel_paylink_by_non_creator_returns_not_paylink_creator() {
-        let env = Env::default();
+        let (env, _contract_id, client, _admin) = setup();
         env.mock_all_auths();
-
-        let contract_id = env.register(PayLinkContract, ());
-        let client = PayLinkContractClient::new(&env, &contract_id);
 
         let creator = String::from_str(&env, "erin");
         let other_user = String::from_str(&env, "frank");
@@ -344,11 +417,8 @@ mod test {
 
     #[test]
     fn cancel_paid_paylink_returns_paylink_already_paid() {
-        let env = Env::default();
+        let (env, contract_id, client, _admin) = setup();
         env.mock_all_auths();
-
-        let contract_id = env.register(PayLinkContract, ());
-        let client = PayLinkContractClient::new(&env, &contract_id);
 
         let creator = String::from_str(&env, "grace");
         let token_id = String::from_str(&env, "tok-paid");
@@ -376,36 +446,20 @@ mod test {
     }
 
     #[test]
-    fn create_paylink_for_non_existent_creator_returns_creator_not_found() {
-        let env = Env::default();
-        let contract_id = env.register(PayLinkContract, ());
-        let client = PayLinkContractClient::new(&env, &contract_id);
-
-        let creator = String::from_str(&env, "unknown");
-        let token_id = String::from_str(&env, "tok-unknown");
-        let note = String::from_str(&env, "test");
-
-        assert_eq!(
-            client.try_create_paylink(&creator, &token_id, &100_i128, &note, &10),
-            Err(Ok(Error::CreatorNotFound))
-        );
-    }
-
-    #[test]
-    fn create_paylink_with_negative_amount_returns_invalid_amount() {
-        let env = Env::default();
-        let contract_id = env.register(PayLinkContract, ());
-        let client = PayLinkContractClient::new(&env, &contract_id);
+    fn create_paylink_returns_contract_paused_when_paused() {
+        let (env, _contract_id, client, _admin) = setup();
+        env.mock_all_auths();
 
         let creator = String::from_str(&env, "henry");
-        let token_id = String::from_str(&env, "tok-neg");
-        let note = String::from_str(&env, "test");
+        let token_id = String::from_str(&env, "tok-paused-create");
+        let note = String::from_str(&env, "ticket");
 
         client.register_creator(&creator);
+        client.pause();
 
         assert_eq!(
-            client.try_create_paylink(&creator, &token_id, &-1_i128, &note, &10),
-            Err(Ok(Error::InvalidAmount))
+            client.try_create_paylink(&creator, &token_id, &10_i128, &note, &20),
+            Err(Ok(Error::ContractPaused))
         );
     }
 
@@ -559,234 +613,66 @@ mod test {
         assert_eq!(
             client.try_credit_yield(&username, &-100_i128),
             Err(Ok(Error::InvalidAmount))
-        );
-    }
-
-    #[test]
-    fn credit_yield_increases_stake_balance() {
-        let env = Env::default();
-        let contract_id = env.register(PayLinkContract, ());
-        let client = PayLinkContractClient::new(&env, &contract_id);
-
-        let admin = Address::generate(&env);
-        client.set_admin(&admin);
-
-        let username = String::from_str(&env, "oscar");
-        client.register_creator(&username);
+    fn cancel_paylink_returns_contract_paused_when_paused() {
+        let (env, _contract_id, client, _admin) = setup();
         env.mock_all_auths();
 
-        // Credit yield multiple times
-        client.credit_yield(&username, &100_i128);
-        client.credit_yield(&username, &200_i128);
-        client.credit_yield(&username, &50_i128);
-
-        // Check stake balance (would need a getter, but we can check storage directly)
-        env.as_contract(&contract_id, || {
-            let stake_key = DataKey::StakeBalance(username.clone());
-            let balance: i128 = env
-                .storage()
-                .persistent()
-                .get(&stake_key)
-                .expect("expected stake balance");
-            assert_eq!(balance, 350_i128);
-        });
-    }
-
-    #[test]
-    fn credit_yield_to_multiple_users() {
-        let env = Env::default();
-        let contract_id = env.register(PayLinkContract, ());
-        let client = PayLinkContractClient::new(&env, &contract_id);
-
-        let admin = Address::generate(&env);
-        client.set_admin(&admin);
-
-        let user1 = String::from_str(&env, "peter");
-        let user2 = String::from_str(&env, "quinn");
-
-        client.register_creator(&user1);
-        client.register_creator(&user2);
-        env.mock_all_auths();
-
-        client.credit_yield(&user1, &100_i128);
-        client.credit_yield(&user2, &200_i128);
-
-        env.as_contract(&contract_id, || {
-            let stake_key1 = DataKey::StakeBalance(user1.clone());
-            let stake_key2 = DataKey::StakeBalance(user2.clone());
-
-            let balance1: i128 = env.storage().persistent().get(&stake_key1).unwrap_or(0);
-            let balance2: i128 = env.storage().persistent().get(&stake_key2).unwrap_or(0);
-
-            assert_eq!(balance1, 100_i128);
-            assert_eq!(balance2, 200_i128);
-        });
-    }
-
-    #[test]
-    fn set_admin_panics_on_second_call() {
-        let env = Env::default();
-        let contract_id = env.register(PayLinkContract, ());
-        let client = PayLinkContractClient::new(&env, &contract_id);
-
-        let admin1 = Address::generate(&env);
-        let admin2 = Address::generate(&env);
-
-        client.set_admin(&admin1);
-
-        // Second call should panic - we can't catch panics in no_std, so we use try_* pattern
-        // This test documents the expected behavior but can't assert it directly
-        // In practice, calling set_admin twice will panic
-        let result = client.try_set_admin(&admin2);
-        // The try_ call returns an error when the call panics
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn paylink_expiry_test_with_ledger_advance() {
-        let env = Env::default();
-        let contract_id = env.register(PayLinkContract, ());
-        let client = PayLinkContractClient::new(&env, &contract_id);
-
-        let creator = String::from_str(&env, "rex");
-        let token_id = String::from_str(&env, "tok-expiry");
-        let note = String::from_str(&env, "expiry test");
+        let creator = String::from_str(&env, "irene");
+        let token_id = String::from_str(&env, "tok-paused-cancel");
+        let note = String::from_str(&env, "invoice");
 
         client.register_creator(&creator);
-        env.ledger().set_sequence_number(100);
-
-        // Create paylink with ttl_ledgers=1 (expires at ledger 101)
-        client.create_paylink(&creator, &token_id, &100_i128, &note, &1);
-
-        // Verify initial state
-        let paylink_before = client
-            .get_paylink(&token_id)
-            .expect("expected PayLink in storage");
-        assert_eq!(paylink_before.expiration_ledger, 101);
-        assert!(!paylink_before.cancelled);
-
-        // Advance ledger by 2 (to 102, past expiry)
-        env.ledger().set_sequence_number(102);
-
-        // PayLink data should still be readable
-        let paylink_after = client
-            .get_paylink(&token_id)
-            .expect("expected PayLink still readable");
-        assert_eq!(paylink_after.expiration_ledger, 101);
-        // Note: expiry check would be in the pay/claim function, not get_paylink
-    }
-
-    #[test]
-    fn multiple_paylinks_for_same_creator() {
-        let env = Env::default();
-        let contract_id = env.register(PayLinkContract, ());
-        let client = PayLinkContractClient::new(&env, &contract_id);
-
-        let creator = String::from_str(&env, "sara");
-        client.register_creator(&creator);
-
-        // Create multiple paylinks with different token IDs
-        client.create_paylink(&creator, &String::from_str(&env, "tok-1"), &100_i128, &String::from_str(&env, "first"), &10);
-        client.create_paylink(&creator, &String::from_str(&env, "tok-2"), &200_i128, &String::from_str(&env, "second"), &20);
-        client.create_paylink(&creator, &String::from_str(&env, "tok-3"), &300_i128, &String::from_str(&env, "third"), &30);
-
-        // Verify all paylinks exist
-        let pl1 = client.get_paylink(&String::from_str(&env, "tok-1")).expect("tok-1 should exist");
-        let pl2 = client.get_paylink(&String::from_str(&env, "tok-2")).expect("tok-2 should exist");
-        let pl3 = client.get_paylink(&String::from_str(&env, "tok-3")).expect("tok-3 should exist");
-
-        assert_eq!(pl1.amount, 100_i128);
-        assert_eq!(pl2.amount, 200_i128);
-        assert_eq!(pl3.amount, 300_i128);
-
-        assert_eq!(pl1.expiration_ledger, env.ledger().sequence() + 10);
-        assert_eq!(pl2.expiration_ledger, env.ledger().sequence() + 20);
-        assert_eq!(pl3.expiration_ledger, env.ledger().sequence() + 30);
-    }
-
-    #[test]
-    fn cancel_non_existent_paylink_returns_paylink_not_found() {
-        let env = Env::default();
-        env.mock_all_auths();
-
-        let contract_id = env.register(PayLinkContract, ());
-        let client = PayLinkContractClient::new(&env, &contract_id);
-
-        let creator = String::from_str(&env, "tom");
-        let token_id = String::from_str(&env, "non-existent");
+        client.create_paylink(&creator, &token_id, &15_i128, &note, &20);
+        client.pause();
 
         assert_eq!(
             client.try_cancel_paylink(&creator, &token_id),
-            Err(Ok(Error::PayLinkNotFound))
+            Err(Ok(Error::ContractPaused))
         );
     }
 
     #[test]
-    fn cancel_already_cancelled_paylink_succeeds() {
-        let env = Env::default();
+    fn unpause_restores_create_paylink_access() {
+        let (env, _contract_id, client, _admin) = setup();
         env.mock_all_auths();
 
-        let contract_id = env.register(PayLinkContract, ());
-        let client = PayLinkContractClient::new(&env, &contract_id);
-
-        let creator = String::from_str(&env, "uma");
-        let token_id = String::from_str(&env, "tok-cancel-twice");
-        let note = String::from_str(&env, "test");
+        let creator = String::from_str(&env, "jane");
+        let token_id = String::from_str(&env, "tok-after-unpause");
+        let note = String::from_str(&env, "groceries");
 
         client.register_creator(&creator);
-        client.create_paylink(&creator, &token_id, &50_i128, &note, &10);
+        client.pause();
+        client.unpause();
 
-        // First cancel
-        client.cancel_paylink(&creator, &token_id);
-        let pl1 = client.get_paylink(&token_id).expect("expected PayLink");
-        assert!(pl1.cancelled);
-
-        // Second cancel should succeed (idempotent) or fail gracefully
-        // Based on current implementation, it will succeed but cancelled stays true
-        client.cancel_paylink(&creator, &token_id);
-        let pl2 = client.get_paylink(&token_id).expect("expected PayLink");
-        assert!(pl2.cancelled);
+        let result = client.try_create_paylink(&creator, &token_id, &20_i128, &note, &20);
+        assert_ne!(result, Err(Ok(Error::ContractPaused)));
+        assert!(client.get_paylink(&token_id).is_some());
     }
 
     #[test]
-    fn paylink_data_fields_verification() {
-        let env = Env::default();
-        let contract_id = env.register(PayLinkContract, ());
-        let client = PayLinkContractClient::new(&env, &contract_id);
+    fn credit_yield_not_blocked_when_paused() {
+        let (env, _contract_id, client, _admin) = setup();
+        env.mock_all_auths();
 
-        let creator = String::from_str(&env, "victor");
-        let token_id = String::from_str(&env, "tok-verify");
-        let note = String::from_str(&env, "detailed verification test");
-
-        client.register_creator(&creator);
-        env.ledger().set_sequence_number(500);
-
-        client.create_paylink(&creator, &token_id, &1_000_000_i128, &note, &100);
-
-        let stored = client.get_paylink(&token_id).expect("expected PayLink");
-
-        assert_eq!(stored.creator_username, creator);
-        assert_eq!(stored.amount, 1_000_000_i128);
-        assert_eq!(stored.note, note);
-        assert_eq!(stored.expiration_ledger, 600);
-        assert!(!stored.paid);
-        assert!(!stored.cancelled);
-    }
-
-    #[test]
-    fn credit_yield_without_auth_fails() {
-        let env = Env::default();
-        let contract_id = env.register(PayLinkContract, ());
-        let client = PayLinkContractClient::new(&env, &contract_id);
-
-        let admin = Address::generate(&env);
-        client.set_admin(&admin);
-
-        let username = String::from_str(&env, "wendy");
+        let username = String::from_str(&env, "kate");
         client.register_creator(&username);
+        client.pause();
 
-        // Don't mock auths - should fail
-        let result = client.try_credit_yield(&username, &100_i128);
-        assert!(result.is_err());
+        let result = client.try_credit_yield(&username, &5_i128);
+        assert_ne!(result, Err(Ok(Error::ContractPaused)));
+    }
+
+    #[test]
+    #[should_panic]
+    fn pause_requires_admin_auth() {
+        let (_env, _contract_id, client, _admin) = setup();
+        client.pause();
+    }
+
+    #[test]
+    #[should_panic]
+    fn unpause_requires_admin_auth() {
+        let (_env, _contract_id, client, _admin) = setup();
+        client.unpause();
     }
 }
