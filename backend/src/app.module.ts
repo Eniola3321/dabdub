@@ -82,6 +82,7 @@ import { FlutterwaveModule } from './flutterwave/flutterwave.module';
 import { FeatureFlagModule } from './feature-flags/feature-flag.module';
 import { GeoModule } from './geo/geo.module';
 import { GeoBlockMiddleware } from './geo/geo-block.middleware';
+import { ReceiptModule } from './receipt/receipt.module';
 
 @Module({
   imports: [
@@ -248,6 +249,9 @@ import { GeoBlockMiddleware } from './geo/geo-block.middleware';
     // User-level feature flags (rollouts, A/B) — Redis-cached evaluation.
     FeatureFlagModule,
     GeoModule,
+
+    // Receipts — on-demand PDF receipt generation + R2 storage + email delivery.
+    ReceiptModule,
 
   ],
 
