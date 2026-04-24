@@ -3,13 +3,14 @@
 mod test;
 
 use soroban_sdk::{
-    contract, contractevent, contractimpl, contracttype, token, Address, BytesN, Env,
+    contract, contractevent, contractimpl, contracttype, token, Address, BytesN, Env, String,
 };
 
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
 pub enum PaymentStatus {
     Pending,
+    Disputed,
     Released,
     Expired,
 }
@@ -23,6 +24,8 @@ pub struct PaymentEscrow {
     pub customer: Address,
     pub status: PaymentStatus,
     pub expiry: u32,
+    pub dispute_window_end: u32,
+    pub dispute_reason: Option<String>,
 }
 
 #[contracttype]
@@ -56,6 +59,22 @@ struct ExpiryEvent {
     customer: Address,
     amount: i128,
 }
+
+#[contractevent(topics = ["ESCROW", "dispute_opened"])]
+struct DisputeOpenedEvent {
+    payment_id: BytesN<32>,
+    opened_by: Address,
+    reason: String,
+}
+
+#[contractevent(topics = ["ESCROW", "dispute_resolved"])]
+struct DisputeResolvedEvent {
+    payment_id: BytesN<32>,
+    winner: Address,
+    amount: i128,
+}
+
+const MAX_DISPUTE_WINDOW_LEDGERS: u32 = 51_840;
 
 #[contract]
 pub struct PaymentEscrowContract;
@@ -104,6 +123,17 @@ impl PaymentEscrowContract {
             .get(&DataKey::DefaultTtlLedgers)
             .unwrap();
         let expiry = env.ledger().sequence().saturating_add(default_ttl_ledgers);
+        let dispute_window_end = {
+            let max_window_end = env
+                .ledger()
+                .sequence()
+                .saturating_add(MAX_DISPUTE_WINDOW_LEDGERS);
+            if expiry < max_window_end {
+                expiry
+            } else {
+                max_window_end
+            }
+        };
 
         let payment = PaymentEscrow {
             payment_id: payment_id.clone(),
@@ -112,6 +142,8 @@ impl PaymentEscrowContract {
             customer: customer.clone(),
             status: PaymentStatus::Pending,
             expiry,
+            dispute_window_end,
+            dispute_reason: None,
         };
 
         env.storage().persistent().set(&key, &payment);
@@ -133,7 +165,7 @@ impl PaymentEscrowContract {
         Self::require_admin(&env, &caller);
 
         let mut payment = Self::get_payment(env.clone(), payment_id.clone());
-        Self::require_pending(&payment);
+        Self::require_releasable(&payment);
 
         if env.ledger().sequence() > payment.expiry {
             panic!("Payment expired");
@@ -162,7 +194,7 @@ impl PaymentEscrowContract {
 
     pub fn expire(env: Env, payment_id: BytesN<32>) {
         let mut payment = Self::get_payment(env.clone(), payment_id.clone());
-        Self::require_pending(&payment);
+        Self::require_expirable(&payment);
 
         if env.ledger().sequence() <= payment.expiry {
             panic!("Payment has not expired");
@@ -184,6 +216,70 @@ impl PaymentEscrowContract {
         ExpiryEvent {
             payment_id,
             customer: payment.customer,
+            amount: payment.amount,
+        }
+        .publish(&env);
+    }
+
+    pub fn dispute(env: Env, caller: Address, payment_id: BytesN<32>, reason: String) {
+        caller.require_auth();
+
+        let mut payment = Self::get_payment(env.clone(), payment_id.clone());
+        if payment.status == PaymentStatus::Disputed {
+            panic!("Dispute already open");
+        }
+        if payment.status != PaymentStatus::Pending {
+            panic!("Payment is not pending");
+        }
+        if caller != payment.customer && caller != payment.merchant {
+            panic!("Not payment participant");
+        }
+        if env.ledger().sequence() > payment.dispute_window_end {
+            panic!("Dispute window expired");
+        }
+
+        payment.status = PaymentStatus::Disputed;
+        payment.dispute_reason = Some(reason.clone());
+        env.storage()
+            .persistent()
+            .set(&DataKey::Payment(payment_id.clone()), &payment);
+
+        DisputeOpenedEvent {
+            payment_id,
+            opened_by: caller,
+            reason,
+        }
+        .publish(&env);
+    }
+
+    pub fn resolve_dispute(env: Env, caller: Address, payment_id: BytesN<32>, winner: Address) {
+        caller.require_auth();
+        Self::require_admin(&env, &caller);
+
+        let mut payment = Self::get_payment(env.clone(), payment_id.clone());
+        if payment.status != PaymentStatus::Disputed {
+            panic!("Dispute is not open");
+        }
+        if winner != payment.customer && winner != payment.merchant {
+            panic!("Invalid dispute winner");
+        }
+
+        let usdc_token: Address = env.storage().instance().get(&DataKey::UsdcToken).unwrap();
+        let token_client = token::Client::new(&env, &usdc_token);
+        token_client.transfer(&env.current_contract_address(), &winner, &payment.amount);
+
+        payment.status = if winner == payment.merchant {
+            PaymentStatus::Released
+        } else {
+            PaymentStatus::Expired
+        };
+        env.storage()
+            .persistent()
+            .set(&DataKey::Payment(payment_id.clone()), &payment);
+
+        DisputeResolvedEvent {
+            payment_id,
+            winner,
             amount: payment.amount,
         }
         .publish(&env);
@@ -220,6 +316,10 @@ impl PaymentEscrowContract {
             .unwrap()
     }
 
+    pub fn get_max_dispute_window_ledgers(_env: Env) -> u32 {
+        MAX_DISPUTE_WINDOW_LEDGERS
+    }
+
     fn require_admin(env: &Env, caller: &Address) {
         let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
         if caller != &admin {
@@ -227,7 +327,19 @@ impl PaymentEscrowContract {
         }
     }
 
-    fn require_pending(payment: &PaymentEscrow) {
+    fn require_releasable(payment: &PaymentEscrow) {
+        if payment.status == PaymentStatus::Disputed {
+            panic!("Dispute is open");
+        }
+        if payment.status != PaymentStatus::Pending {
+            panic!("Payment is not pending");
+        }
+    }
+
+    fn require_expirable(payment: &PaymentEscrow) {
+        if payment.status == PaymentStatus::Disputed {
+            panic!("Dispute is open");
+        }
         if payment.status != PaymentStatus::Pending {
             panic!("Payment is not pending");
         }
