@@ -290,6 +290,20 @@
                     },
                     {
                       "key": {
+                        "symbol": "dispute_reason"
+                      },
+                      "val": "void"
+                    },
+                    {
+                      "key": {
+                        "symbol": "dispute_window_end"
+                      },
+                      "val": {
+                        "u32": 110
+                      }
+                    },
+                    {
+                      "key": {
                         "symbol": "expiry"
                       },
                       "val": {

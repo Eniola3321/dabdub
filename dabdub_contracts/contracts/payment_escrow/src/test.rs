@@ -1,7 +1,9 @@
 #![cfg(test)]
 
 use crate::{PaymentEscrowContract, PaymentEscrowContractClient, PaymentStatus};
-use soroban_sdk::{testutils::Address as _, testutils::Ledger, token, Address, BytesN, Env};
+use soroban_sdk::{
+    testutils::Address as _, testutils::Ledger, token, Address, BytesN, Env, String,
+};
 
 fn setup_env() -> (
     Env,
@@ -59,6 +61,8 @@ fn test_deposit_happy_path() {
     assert_eq!(payment.merchant, merchant.clone());
     assert_eq!(payment.status, PaymentStatus::Pending);
     assert_eq!(payment.expiry, 110);
+    assert_eq!(payment.dispute_window_end, 110);
+    assert_eq!(payment.dispute_reason, None);
     assert_eq!(client.get_balance(&payment_id), 250_000_000);
 
     let token_client = token::Client::new(&env, &usdc);
@@ -169,4 +173,194 @@ fn test_expire_before_ttl() {
 
     client.deposit(&customer, &payment_id, &merchant, &250_000_000i128);
     client.expire(&payment_id);
+}
+
+#[test]
+fn test_dispute_by_customer() {
+    let (env, client, _contract_id, _admin, customer, merchant, _usdc) = setup_env();
+    let payment_id = make_id(&env, 1);
+
+    client.deposit(&customer, &payment_id, &merchant, &250_000_000i128);
+    client.dispute(
+        &customer,
+        &payment_id,
+        &String::from_str(&env, "service not delivered"),
+    );
+
+    let payment = client.get_payment(&payment_id);
+    assert_eq!(payment.status, PaymentStatus::Disputed);
+    assert_eq!(
+        payment.dispute_reason,
+        Some(String::from_str(&env, "service not delivered"))
+    );
+}
+
+#[test]
+fn test_dispute_by_merchant() {
+    let (env, client, _contract_id, _admin, customer, merchant, _usdc) = setup_env();
+    let payment_id = make_id(&env, 1);
+
+    client.deposit(&customer, &payment_id, &merchant, &250_000_000i128);
+    client.dispute(
+        &merchant,
+        &payment_id,
+        &String::from_str(&env, "backend settlement mismatch"),
+    );
+
+    let payment = client.get_payment(&payment_id);
+    assert_eq!(payment.status, PaymentStatus::Disputed);
+}
+
+#[test]
+#[should_panic(expected = "Not payment participant")]
+fn test_dispute_unauthorized_caller() {
+    let (env, client, _contract_id, _admin, customer, merchant, _usdc) = setup_env();
+    let payment_id = make_id(&env, 1);
+    let random = Address::generate(&env);
+
+    client.deposit(&customer, &payment_id, &merchant, &250_000_000i128);
+    client.dispute(&random, &payment_id, &String::from_str(&env, "not allowed"));
+}
+
+#[test]
+#[should_panic(expected = "Dispute already open")]
+fn test_duplicate_dispute_rejected() {
+    let (env, client, _contract_id, _admin, customer, merchant, _usdc) = setup_env();
+    let payment_id = make_id(&env, 1);
+
+    client.deposit(&customer, &payment_id, &merchant, &250_000_000i128);
+    client.dispute(&customer, &payment_id, &String::from_str(&env, "first"));
+    client.dispute(&merchant, &payment_id, &String::from_str(&env, "second"));
+}
+
+#[test]
+#[should_panic(expected = "Dispute window expired")]
+fn test_dispute_after_window_rejected() {
+    let (env, client, _contract_id, _admin, customer, merchant, _usdc) = setup_env();
+    let payment_id = make_id(&env, 1);
+
+    client.deposit(&customer, &payment_id, &merchant, &250_000_000i128);
+    env.ledger().set_sequence_number(111);
+    client.dispute(&customer, &payment_id, &String::from_str(&env, "too late"));
+}
+
+#[test]
+#[should_panic(expected = "Dispute is open")]
+fn test_release_blocked_while_disputed() {
+    let (env, client, _contract_id, admin, customer, merchant, _usdc) = setup_env();
+    let payment_id = make_id(&env, 1);
+
+    client.deposit(&customer, &payment_id, &merchant, &250_000_000i128);
+    client.dispute(
+        &customer,
+        &payment_id,
+        &String::from_str(&env, "hold funds"),
+    );
+    client.release(&admin, &payment_id);
+}
+
+#[test]
+#[should_panic(expected = "Dispute is open")]
+fn test_expire_blocked_while_disputed() {
+    let (env, client, _contract_id, _admin, customer, merchant, _usdc) = setup_env();
+    let payment_id = make_id(&env, 1);
+
+    client.deposit(&customer, &payment_id, &merchant, &250_000_000i128);
+    client.dispute(
+        &merchant,
+        &payment_id,
+        &String::from_str(&env, "hold refund"),
+    );
+    env.ledger().set_sequence_number(111);
+    client.expire(&payment_id);
+}
+
+#[test]
+fn test_resolve_dispute_to_customer() {
+    let (env, client, contract_id, admin, customer, merchant, usdc) = setup_env();
+    let payment_id = make_id(&env, 1);
+
+    client.deposit(&customer, &payment_id, &merchant, &250_000_000i128);
+    client.dispute(
+        &merchant,
+        &payment_id,
+        &String::from_str(&env, "chargeback"),
+    );
+    client.resolve_dispute(&admin, &payment_id, &customer);
+
+    let payment = client.get_payment(&payment_id);
+    assert_eq!(payment.status, PaymentStatus::Expired);
+
+    let token_client = token::Client::new(&env, &usdc);
+    assert_eq!(token_client.balance(&customer), 1_000_000_000);
+    assert_eq!(token_client.balance(&contract_id), 0);
+}
+
+#[test]
+fn test_resolve_dispute_to_merchant() {
+    let (env, client, contract_id, admin, customer, merchant, usdc) = setup_env();
+    let payment_id = make_id(&env, 1);
+
+    client.deposit(&customer, &payment_id, &merchant, &250_000_000i128);
+    client.dispute(
+        &customer,
+        &payment_id,
+        &String::from_str(&env, "investigate"),
+    );
+    client.resolve_dispute(&admin, &payment_id, &merchant);
+
+    let payment = client.get_payment(&payment_id);
+    assert_eq!(payment.status, PaymentStatus::Released);
+
+    let token_client = token::Client::new(&env, &usdc);
+    assert_eq!(token_client.balance(&merchant), 250_000_000);
+    assert_eq!(token_client.balance(&contract_id), 0);
+}
+
+#[test]
+#[should_panic(expected = "Not admin")]
+fn test_resolve_dispute_unauthorized() {
+    let (env, client, _contract_id, _admin, customer, merchant, _usdc) = setup_env();
+    let payment_id = make_id(&env, 1);
+    let random = Address::generate(&env);
+
+    client.deposit(&customer, &payment_id, &merchant, &250_000_000i128);
+    client.dispute(
+        &customer,
+        &payment_id,
+        &String::from_str(&env, "investigate"),
+    );
+    client.resolve_dispute(&random, &payment_id, &merchant);
+}
+
+#[test]
+#[should_panic(expected = "Invalid dispute winner")]
+fn test_resolve_dispute_invalid_winner() {
+    let (env, client, _contract_id, admin, customer, merchant, _usdc) = setup_env();
+    let payment_id = make_id(&env, 1);
+    let random = Address::generate(&env);
+
+    client.deposit(&customer, &payment_id, &merchant, &250_000_000i128);
+    client.dispute(
+        &merchant,
+        &payment_id,
+        &String::from_str(&env, "investigate"),
+    );
+    client.resolve_dispute(&admin, &payment_id, &random);
+}
+
+#[test]
+#[should_panic(expected = "Dispute is not open")]
+fn test_resolve_dispute_already_resolved() {
+    let (env, client, _contract_id, admin, customer, merchant, _usdc) = setup_env();
+    let payment_id = make_id(&env, 1);
+
+    client.deposit(&customer, &payment_id, &merchant, &250_000_000i128);
+    client.dispute(
+        &merchant,
+        &payment_id,
+        &String::from_str(&env, "investigate"),
+    );
+    client.resolve_dispute(&admin, &payment_id, &merchant);
+    client.resolve_dispute(&admin, &payment_id, &merchant);
 }
